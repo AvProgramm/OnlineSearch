@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Veritaserum — Online Search Models for Fact Verification</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=IBM+Plex+Mono:wght@400;600&family=Libre+Franklin:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0d0d0d;
+    --paper: #f5f0e8;
+    --amber: #d4821a;
+    --amber-light: #f0a742;
+    --amber-dark: #9a5c0f;
+    --red: #c0392b;
+    --slate: #1a1a2e;
+    --mid: #2d2d2d;
+    --faint: #3a3a3a;
+    --ghost: rgba(212,130,26,0.08);
+    --serif: 'Playfair Display', Georgia, serif;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Libre Franklin', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--slate);
+    font-family: var(--sans);
+    color: var(--paper);
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* NOISE TEXTURE OVERLAY */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.4;
+  }
+
+  /* PROGRESS BAR */
+  #progress-bar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--amber), var(--amber-light));
+    transition: width 0.4s ease;
+    z-index: 999;
+    box-shadow: 0 0 12px var(--amber);
+  }
+
+  /* SLIDE COUNTER */
+  #slide-counter {
+    position: fixed;
+    bottom: 28px; right: 36px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--amber);
+    letter-spacing: 0.15em;
+    z-index: 999;
+    opacity: 0.7;
+  }
+
+  /* NAV ARROWS */
+  .nav-btn {
+    position: fixed;
+    bottom: 20px;
+    background: none;
+    border: 1px solid rgba(212,130,26,0.3);
+    color: var(--amber);
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 18px;
+    z-index: 999;
+    transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .nav-btn:hover { background: rgba(212,130,26,0.15); border-color: var(--amber); }
+  #prev-btn { left: calc(50% - 60px); }
+  #next-btn { left: calc(50% + 16px); }
+
+  /* SLIDE WRAPPER */
+  #slides-container {
+    width: 100%; height: 100vh;
+    position: relative;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 60px 80px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(20px);
+    transition: opacity 0.45s ease, transform 0.45s ease;
+  }
+  .slide.active {
+    opacity: 1;
+    pointer-events: all;
+    transform: translateY(0);
+  }
+
+  /* SLIDE TYPES */
+  .slide-title { align-items: center; text-align: center; }
+  .slide-center { align-items: center; text-align: center; }
+
+  /* DECORATIVE LINE */
+  .rule {
+    width: 60px; height: 2px;
+    background: var(--amber);
+    margin: 20px 0;
+    flex-shrink: 0;
+  }
+  .rule.center { margin: 20px auto; }
+  .rule.long { width: 100%; }
+
+  /* EYEBROW */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--amber);
+    opacity: 0.8;
+  }
+
+  /* HEADINGS */
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(42px, 5vw, 72px);
+    font-weight: 900;
+    line-height: 1.05;
+    color: var(--paper);
+    max-width: 900px;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-size: clamp(28px, 3.5vw, 46px);
+    font-weight: 700;
+    color: var(--paper);
+    line-height: 1.15;
+    max-width: 800px;
+  }
+  h3 {
+    font-family: var(--serif);
+    font-size: 22px;
+    color: var(--amber-light);
+    font-style: italic;
+    margin-bottom: 6px;
+  }
+  p, li {
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.7;
+    color: rgba(245,240,232,0.82);
+    max-width: 760px;
+  }
+  .lead {
+    font-size: 20px;
+    color: rgba(245,240,232,0.9);
+    font-weight: 300;
+    max-width: 700px;
+    line-height: 1.6;
+  }
+
+  /* AMBER HIGHLIGHT */
+  .hl { color: var(--amber-light); font-weight: 600; }
+  .hl-red { color: #e8706a; }
+
+  /* CARDS */
+  .card-grid {
+    display: grid;
+    gap: 16px;
+    width: 100%;
+    margin-top: 24px;
+  }
+  .card-grid-2 { grid-template-columns: 1fr 1fr; }
+  .card-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  .card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(212,130,26,0.2);
+    border-radius: 4px;
+    padding: 20px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--amber);
+  }
+  .card:hover {
+    background: rgba(212,130,26,0.07);
+    border-color: rgba(212,130,26,0.4);
+  }
+  .card-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 6px;
+    opacity: 0.7;
+  }
+  .card h3 {
+    font-size: 16px;
+    margin-bottom: 8px;
+    font-style: normal;
+    color: var(--paper);
+  }
+  .card p { font-size: 13px; line-height: 1.55; max-width: none; }
+
+  /* BADGE */
+  .badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    padding: 3px 8px;
+    border-radius: 2px;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-top: 8px;
+  }
+  .badge-green { background: rgba(39,174,96,0.2); color: #5dbb80; border: 1px solid rgba(39,174,96,0.3); }
+  .badge-amber { background: rgba(212,130,26,0.2); color: var(--amber-light); border: 1px solid rgba(212,130,26,0.3); }
+  .badge-red   { background: rgba(192,57,43,0.2); color: #e8706a; border: 1px solid rgba(192,57,43,0.3); }
+  .badge-blue  { background: rgba(52,152,219,0.2); color: #85c1e9; border: 1px solid rgba(52,152,219,0.3); }
+
+  /* TABLE */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 20px;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--amber);
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(212,130,26,0.3);
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    color: rgba(245,240,232,0.8);
+    vertical-align: middle;
+  }
+  tr:hover td { background: rgba(212,130,26,0.05); }
+
+  /* QUOTE BLOCK */
+  blockquote {
+    border-left: 3px solid var(--amber);
+    padding: 16px 24px;
+    margin: 24px 0;
+    background: rgba(212,130,26,0.06);
+    border-radius: 0 4px 4px 0;
+  }
+  blockquote p {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 17px;
+    color: var(--paper);
+    max-width: none;
+  }
+
+  /* PIPELINE */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-top: 28px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .pipe-step {
+    background: rgba(212,130,26,0.12);
+    border: 1px solid rgba(212,130,26,0.3);
+    border-radius: 4px;
+    padding: 14px 18px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--amber-light);
+    letter-spacing: 0.05em;
+    text-align: center;
+    min-width: 100px;
+  }
+  .pipe-arrow {
+    font-size: 20px;
+    color: var(--amber);
+    opacity: 0.5;
+    margin: 0 4px;
+  }
+
+  /* TITLE SLIDE SPECIFICS */
+  .title-brand {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.4em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 24px;
+  }
+  .title-sub {
+    font-family: var(--sans);
+    font-size: 18px;
+    font-weight: 300;
+    color: rgba(245,240,232,0.6);
+    margin-top: 20px;
+    letter-spacing: 0.02em;
+  }
+  .title-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: rgba(212,130,26,0.5);
+    letter-spacing: 0.2em;
+    margin-top: 40px;
+  }
+
+  /* BG DECORATIVE */
+  .bg-number {
+    position: absolute;
+    right: 60px; bottom: 40px;
+    font-family: var(--serif);
+    font-size: 200px;
+    font-weight: 900;
+    color: rgba(212,130,26,0.04);
+    line-height: 1;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* STAR RATING */
+  .stars { color: var(--amber-light); font-size: 12px; letter-spacing: 2px; }
+
+  .content-wrap { position: relative; z-index: 1; width: 100%; }
+
+  /* LIST CUSTOM */
+  ul.custom { list-style: none; margin-top: 16px; }
+  ul.custom li {
+    padding: 8px 0 8px 24px;
+    position: relative;
+    font-size: 15px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  ul.custom li::before {
+    content: '▸';
+    position: absolute;
+    left: 0;
+    color: var(--amber);
+    font-size: 10px;
+    top: 12px;
+  }
+
+  /* COLUMNS */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    width: 100%;
+    margin-top: 24px;
+    align-items: start;
+  }
+
+  /* VERDICT BOX */
+  .verdict {
+    background: linear-gradient(135deg, rgba(212,130,26,0.15), rgba(212,130,26,0.05));
+    border: 1px solid rgba(212,130,26,0.4);
+    border-radius: 6px;
+    padding: 24px 28px;
+    margin-top: 24px;
+  }
+  .verdict-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.3em;
+    color: var(--amber);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .verdict p { font-size: 15px; color: var(--paper); max-width: none; }
+
+</style>
+</head>
+<body>
+
+<div id="progress-bar"></div>
+<div id="slide-counter">01 / 11</div>
+<button class="nav-btn" id="prev-btn">←</button>
+<button class="nav-btn" id="next-btn">→</button>
+
+<div id="slides-container">
+
+  <!-- SLIDE 1: TITLE -->
+  <div class="slide slide-title active" data-slide="1">
+    <div class="bg-number">V</div>
+    <div class="content-wrap" style="max-width:800px; margin:0 auto;">
+      <div class="title-brand">FIT3161 / FIT3163 — FYP Studio</div>
+      <h1>Online Search Models<br>for <em style="color:var(--amber)">Veritaserum</em></h1>
+      <div class="rule center"></div>
+      <p class="title-sub">A survey of open-source LLMs with web search &amp; tool-use capabilities<br>for AI-powered fact verification</p>
+      <p class="title-meta">Sources: Hugging Face · arXiv · GitHub · QwenLM · April 2026</p>
+    </div>
+  </div>
+
+  <!-- SLIDE 2: WHAT IS VERITASERUM -->
+  <div class="slide" data-slide="2">
+    <div class="bg-number">01</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Project Context</div>
+      <div class="rule"></div>
+      <h2>What is Veritaserum?</h2>
+      <div class="two-col" style="margin-top:28px;">
+        <div>
+          <p class="lead">An AI-powered system that assesses the <span class="hl">credibility of news articles</span> by verifying individual factual statements — not classifying articles as a whole.</p>
+          <div style="margin-top:20px;">
+            <div class="card-tag" style="margin-bottom:10px;">Core pipeline</div>
+            <div class="pipeline" style="flex-direction:column; align-items:flex-start; gap:8px;">
+              <div class="pipe-step" style="width:100%">📰 Article Input</div>
+              <div class="pipe-arrow" style="padding-left:20px;">↓</div>
+              <div class="pipe-step" style="width:100%">✂️ Claim Extraction (NLP)</div>
+              <div class="pipe-arrow" style="padding-left:20px;">↓</div>
+              <div class="pipe-step" style="width:100%">🔍 Online Evidence Retrieval</div>
+              <div class="pipe-arrow" style="padding-left:20px;">↓</div>
+              <div class="pipe-step" style="width:100%">⚖️ Claim Verification + Score</div>
+              <div class="pipe-arrow" style="padding-left:20px;">↓</div>
+              <div class="pipe-step" style="width:100%">🔴🟡🟢 Highlighted Output + Citations</div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="card-tag" style="margin-bottom:10px;">Key properties</div>
+          <ul class="custom">
+            <li>Per-claim verification, not article-level classification</li>
+            <li>Confidence scores per statement</li>
+            <li>Links to supporting / contradicting evidence</li>
+            <li>Transparent, explainable reasoning</li>
+            <li>Combines NLP + semantic search + knowledge reasoning</li>
+          </ul>
+          <blockquote style="margin-top:20px;">
+            <p>"Online search is the key missing piece — the model must be able to retrieve live evidence, not just rely on parametric memory."</p>
+          </blockquote>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 3: THE KEY DISTINCTION -->
+  <div class="slide" data-slide="3">
+    <div class="bg-number">02</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Critical Concept</div>
+      <div class="rule"></div>
+      <h2>Online Search Is Not Built Into<br>the Base Model</h2>
+      <div class="card-grid card-grid-2" style="margin-top:28px;">
+        <div class="card" style="border-left-color: #e8706a;">
+          <div class="card-tag" style="color:#e8706a;">Common Misconception ✗</div>
+          <h3 style="color:#e8706a; font-style:normal;">"This LLM has online search"</h3>
+          <p>No base LLM intrinsically searches the web. A model's training data has a cutoff date — it cannot retrieve live information on its own. Saying a "model has web search" is imprecise.</p>
+          <span class="badge badge-red">Misleading framing</span>
+        </div>
+        <div class="card" style="border-left-color: #5dbb80;">
+          <div class="card-tag" style="color:#5dbb80;">Correct Framing ✓</div>
+          <h3 style="color:#5dbb80; font-style:normal;">Reasoning engine + search tool layer</h3>
+          <p>Online search is added as a <strong>tool-use / agent layer</strong> around a capable reasoning model. The model decides when to search, formulates the query, and synthesises the returned results.</p>
+          <span class="badge badge-green">Academically accurate</span>
+        </div>
+      </div>
+      <div class="verdict" style="margin-top:24px;">
+        <div class="verdict-label">For your supervisor presentation</div>
+        <p>Say: <span class="hl">"The online search capability in Veritaserum will be implemented as a tool-augmented agent layer wrapped around a capable open-source reasoning model."</span></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 4: TWO CATEGORIES -->
+  <div class="slide" data-slide="4">
+    <div class="bg-number">03</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Model Taxonomy</div>
+      <div class="rule"></div>
+      <h2>Two Categories of Relevant Models</h2>
+      <div class="card-grid card-grid-2" style="margin-top:28px;">
+        <div>
+          <div class="card-tag">Category A</div>
+          <h3 style="font-style:normal; color: var(--paper); font-size:20px; margin-bottom:12px;">Reasoning Backbone Models</h3>
+          <p style="margin-bottom:16px;">Open-source LLMs that can be connected to a web search tool. They provide the intelligence — claim decomposition, evidence synthesis, verdict generation.</p>
+          <ul class="custom">
+            <li><span class="hl">Qwen3.5-9B / 27B</span> — most recent (Feb 2026)</li>
+            <li><span class="hl">Qwen3-8B</span> — strong tool-use (May 2025)</li>
+            <li><span class="hl">Qwen2.5-7B-Instruct</span> — practical, lighter</li>
+            <li><span class="hl">Meta-Llama-3.1-8B-Instruct</span> — solid baseline</li>
+          </ul>
+        </div>
+        <div>
+          <div class="card-tag">Category B</div>
+          <h3 style="font-style:normal; color: var(--paper); font-size:20px; margin-bottom:12px;">Search-Enabled Systems</h3>
+          <p style="margin-bottom:16px;">Pre-built agent systems or HuggingFace Spaces that already demonstrate the search-then-verify workflow. Good reference implementations.</p>
+          <ul class="custom">
+            <li><span class="hl">OpenResearcher</span> — HF Space, web search + citations</li>
+            <li><span class="hl">SAFE</span> (Google DeepMind) — LLM + Google Search for fact eval</li>
+            <li><span class="hl">Bespoke-MiniCheck-7B</span> — SOTA grounded fact-checking</li>
+            <li><span class="hl">Qwen-Agent</span> — official agent framework with web search tool</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 5: QWEN 3.5 FAMILY -->
+  <div class="slide" data-slide="5">
+    <div class="bg-number">04</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Top Recommendation — Category A</div>
+      <div class="rule"></div>
+      <h2>Qwen3.5 Family <span style="font-size:16px; color:var(--amber); font-weight:400; font-style:italic;">Feb 2026 · Alibaba Cloud</span></h2>
+      <div class="card-grid card-grid-3" style="margin-top:24px;">
+        <div class="card">
+          <div class="card-tag">Lightweight</div>
+          <h3 style="font-style:normal;">Qwen3.5-4B</h3>
+          <p>Good for local dev and testing. Thinking mode + tool call support. 262k context.</p>
+          <span class="badge badge-amber">Prototyping</span>
+        </div>
+        <div class="card" style="border-color:rgba(212,130,26,0.5);">
+          <div class="card-tag">⭐ Recommended</div>
+          <h3 style="font-style:normal;">Qwen3.5-9B</h3>
+          <p>Best balance of capability and resource needs. Native tool calling, web search via Qwen-Agent, 262k context. <strong>Search Agent benchmarked.</strong></p>
+          <span class="badge badge-green">Best for Veritaserum</span>
+        </div>
+        <div class="card">
+          <div class="card-tag">High Capacity</div>
+          <h3 style="font-style:normal;">Qwen3.5-27B</h3>
+          <p>Stronger reasoning for complex multi-step fact chains. Needs more GPU RAM. Still Apache/open license.</p>
+          <span class="badge badge-blue">Production quality</span>
+        </div>
+      </div>
+      <div style="margin-top:20px;">
+        <div class="card-tag" style="margin-bottom:8px;">Why Qwen3.5 is the strongest recent candidate</div>
+        <ul class="custom" style="display:grid; grid-template-columns:1fr 1fr; gap:0 32px;">
+          <li>Released Feb 2026 — most current family on HuggingFace</li>
+          <li>Natively benchmarked on <span class="hl">Search Agent</span> tasks</li>
+          <li>Thinking mode for multi-step claim decomposition</li>
+          <li>262,144 token context — handles long news articles</li>
+          <li>Tool calling built into Qwen-Agent framework</li>
+          <li>201 language support — multilingual misinformation</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 6: QWEN3 & LLAMA -->
+  <div class="slide" data-slide="6">
+    <div class="bg-number">05</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Category A — Alternative Backbones</div>
+      <div class="rule"></div>
+      <h2>Qwen3-8B &amp; Meta-Llama-3.1-8B</h2>
+      <div class="two-col" style="margin-top:28px;">
+        <div>
+          <div class="card">
+            <div class="card-tag">May 2025 · Open Source</div>
+            <h3 style="font-style:normal; font-size:18px;">Qwen3-8B</h3>
+            <p>Leading open-source model in complex agent tasks. Unique <strong>thinking/non-thinking mode switch</strong> — use thinking mode for fact reasoning, fast mode for simpler claims. 32k native context, 131k with YaRN.</p>
+            <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+              <span class="badge badge-green">Tool use ✓</span>
+              <span class="badge badge-green">Agent tasks ✓</span>
+              <span class="badge badge-amber">Smaller than 3.5</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <div class="card-tag">Jul 2024 · Meta</div>
+            <h3 style="font-style:normal; font-size:18px;">Meta-Llama-3.1-8B-Instruct</h3>
+            <p>Still a valid reasoning backbone if your supervisor has prior context with Llama. HuggingFace model page explicitly shows <strong>tool use with Transformers</strong> — web search must be attached as a separate module.</p>
+            <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+              <span class="badge badge-amber">Tool use (external) ✓</span>
+              <span class="badge badge-red">No built-in search</span>
+              <span class="badge badge-blue">Familiar baseline</span>
+            </div>
+          </div>
+          <div style="margin-top:14px; padding:14px; background:rgba(255,255,255,0.03); border-radius:4px; border:1px solid rgba(255,255,255,0.07);">
+            <p style="font-size:13px; color:rgba(245,240,232,0.6);">💡 For Veritaserum, prefer Qwen3.5-9B over Llama 3.1 — it's more recent and natively benchmarked for search agent workflows.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 7: SEARCH-ENABLED SYSTEMS -->
+  <div class="slide" data-slide="7">
+    <div class="bg-number">06</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Category B — Reference Implementations</div>
+      <div class="rule"></div>
+      <h2>Search-Enabled Systems &amp; Spaces</h2>
+      <div class="card-grid" style="grid-template-columns:1fr 1fr; margin-top:24px;">
+        <div class="card">
+          <div class="card-tag">HuggingFace Space</div>
+          <h3 style="font-style:normal;">OpenResearcher</h3>
+          <p>Answers questions using <strong>live web searches and citations</strong>. Closest HF example to Veritaserum's goal: question → web search → grounded answer with links. Excellent reference architecture to study.</p>
+          <span class="badge badge-green">Search + Citations ✓</span>
+        </div>
+        <div class="card">
+          <div class="card-tag">Google DeepMind · 2024</div>
+          <h3 style="font-style:normal;">SAFE — Search-Augmented Factuality Evaluator</h3>
+          <p>Breaks a long-form response into <strong>atomic claims</strong>, sends Google Search queries per claim, determines support. Agrees with human annotators 72% of the time, 20× cheaper. Directly mirrors Veritaserum's per-claim approach.</p>
+          <span class="badge badge-blue">Academic reference ✓</span>
+        </div>
+        <div class="card">
+          <div class="card-tag">EMNLP 2024 SOTA</div>
+          <h3 style="font-style:normal;">Bespoke-MiniCheck-7B</h3>
+          <p>Current SOTA on the LLM-AggreFact fact-verification benchmark (35 models tested). Grounded fact-checking against source documents. Available on HuggingFace, commercially usable. Ideal as your <strong>claim verdict module</strong>.</p>
+          <span class="badge badge-green">SOTA fact-check ✓</span>
+        </div>
+        <div class="card">
+          <div class="card-tag">Official · QwenLM</div>
+          <h3 style="font-style:normal;">Qwen-Agent Framework</h3>
+          <p>Official agent framework wrapping Qwen3/3.5 models. Includes <strong>built-in web search tool</strong>, browser automation, RAG, MCP support. The practical bridge between Qwen3.5-9B and online search for Veritaserum.</p>
+          <span class="badge badge-amber">Plug-and-play search ✓</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 8: COMPARISON TABLE -->
+  <div class="slide" data-slide="8">
+    <div class="bg-number">07</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Side-by-Side Evaluation</div>
+      <div class="rule"></div>
+      <h2>Model Comparison for Veritaserum</h2>
+      <table style="margin-top:20px;">
+        <thead>
+          <tr>
+            <th>Model / System</th>
+            <th>Released</th>
+            <th>Built-in Search</th>
+            <th>Tool Use</th>
+            <th>Fit for Veritaserum</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Qwen3.5-9B</strong> <span style="color:var(--amber); font-size:11px;">⭐ Top pick</span></td>
+            <td><span style="color:#5dbb80;">Feb 2026</span></td>
+            <td>Via Qwen-Agent</td>
+            <td><span class="badge badge-green">Native</span></td>
+            <td><span class="badge badge-green">★★★★★</span></td>
+          </tr>
+          <tr>
+            <td><strong>Qwen3.5-27B</strong></td>
+            <td><span style="color:#5dbb80;">Feb 2026</span></td>
+            <td>Via Qwen-Agent</td>
+            <td><span class="badge badge-green">Native</span></td>
+            <td><span class="badge badge-green">★★★★★</span></td>
+          </tr>
+          <tr>
+            <td><strong>Qwen3-8B</strong></td>
+            <td>May 2025</td>
+            <td>Via Qwen-Agent</td>
+            <td><span class="badge badge-green">Native</span></td>
+            <td><span class="badge badge-green">★★★★☆</span></td>
+          </tr>
+          <tr>
+            <td><strong>Qwen2.5-7B-Instruct</strong></td>
+            <td>Sep 2024</td>
+            <td>External only</td>
+            <td><span class="badge badge-amber">Via framework</span></td>
+            <td><span class="badge badge-amber">★★★☆☆</span></td>
+          </tr>
+          <tr>
+            <td><strong>Meta-Llama-3.1-8B-Instruct</strong></td>
+            <td>Jul 2024</td>
+            <td>External only</td>
+            <td><span class="badge badge-amber">Via Transformers</span></td>
+            <td><span class="badge badge-amber">★★★☆☆</span></td>
+          </tr>
+          <tr>
+            <td><strong>Bespoke-MiniCheck-7B</strong></td>
+            <td>Aug 2024</td>
+            <td>No (doc-grounded)</td>
+            <td><span class="badge badge-red">Not needed</span></td>
+            <td><span class="badge badge-green">★★★★☆ (verdict module)</span></td>
+          </tr>
+          <tr>
+            <td><strong>OpenResearcher (HF Space)</strong></td>
+            <td>Ongoing</td>
+            <td><span style="color:#5dbb80;">Yes (live demo)</span></td>
+            <td><span class="badge badge-green">Built-in</span></td>
+            <td><span class="badge badge-blue">★★★★☆ (reference)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SLIDE 9: PROPOSED ARCHITECTURE -->
+  <div class="slide" data-slide="9">
+    <div class="bg-number">08</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Proposed Design</div>
+      <div class="rule"></div>
+      <h2>Veritaserum Architecture<br>with Online Search</h2>
+      <div style="margin-top:28px;">
+        <div class="pipeline" style="flex-wrap:nowrap; overflow-x:auto; padding-bottom:8px;">
+          <div class="pipe-step">📰<br><small>Article</small></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step" style="border-color:rgba(212,130,26,0.6); background:rgba(212,130,26,0.15);">✂️<br><small>Claim Extractor<br>(Qwen3.5-9B)</small></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">🔎<br><small>Query Former<br>(per claim)</small></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step" style="border-color:rgba(93,187,128,0.5); background:rgba(93,187,128,0.1);">🌐<br><small>Web Search<br>(Qwen-Agent)</small></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">📄<br><small>Evidence<br>Snippets</small></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step" style="border-color:rgba(212,130,26,0.6); background:rgba(212,130,26,0.15);">⚖️<br><small>Verifier<br>(MiniCheck-7B)</small></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step" style="border-color:rgba(93,187,128,0.5); background:rgba(93,187,128,0.1);">🟢🔴<br><small>Score +<br>Citation</small></div>
+        </div>
+        <div class="card-grid card-grid-3" style="margin-top:20px;">
+          <div class="card">
+            <div class="card-tag">Claim Extraction</div>
+            <p style="font-size:13px;">Qwen3.5-9B in thinking mode decomposes the article into atomic, verifiable statements. One query per claim.</p>
+          </div>
+          <div class="card">
+            <div class="card-tag">Online Retrieval</div>
+            <p style="font-size:13px;">Qwen-Agent wraps Qwen3.5-9B with a web search tool. The model calls it autonomously when it needs live evidence.</p>
+          </div>
+          <div class="card">
+            <div class="card-tag">Verdict Generation</div>
+            <p style="font-size:13px;">Bespoke-MiniCheck-7B (EMNLP 2024 SOTA) evaluates each claim against retrieved evidence and outputs a confidence score.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 10: WHAT TO TELL SUPERVISOR -->
+  <div class="slide" data-slide="10">
+    <div class="bg-number">09</div>
+    <div class="content-wrap">
+      <div class="eyebrow">Supervisor Presentation</div>
+      <div class="rule"></div>
+      <h2>What to Say to Your Supervisor</h2>
+      <div class="two-col" style="margin-top:28px;">
+        <div>
+          <blockquote>
+            <p>"Online search in Veritaserum is implemented as a tool-augmented layer. We use <strong>Qwen3.5-9B</strong> (released February 2026, the most recent capable open model on HuggingFace) as the reasoning backbone, connected to a web search tool via the <strong>Qwen-Agent framework</strong>. For claim verdict generation we use <strong>Bespoke-MiniCheck-7B</strong>, the current SOTA model on the LLM-AggreFact benchmark."</p>
+          </blockquote>
+          <div style="margin-top:16px;">
+            <div class="card-tag" style="margin-bottom:8px;">Reference HF links to show</div>
+            <ul class="custom">
+              <li>huggingface.co/Qwen/Qwen3.5-9B</li>
+              <li>github.com/QwenLM/Qwen-Agent</li>
+              <li>huggingface.co/bespokelabs/Bespoke-MiniCheck-7B</li>
+              <li>huggingface.co/papers/2403.18802 (SAFE)</li>
+            </ul>
+          </div>
+        </div>
+        <div>
+          <div class="card-tag" style="margin-bottom:10px;">Key framing points</div>
+          <ul class="custom">
+            <li>No base LLM intrinsically searches the web — it's always a tool layer</li>
+            <li>Qwen3.5 is the most <span class="hl">recent</span> family — Feb 2026, natively benchmarked on search agents</li>
+            <li>SAFE (Google DeepMind) proves this exact architecture works academically</li>
+            <li>MiniCheck-7B is domain-specific and EMNLP 2024 SOTA — academically defensible</li>
+            <li>The two-module design (backbone + verifier) is cleaner and more maintainable</li>
+          </ul>
+          <div class="verdict" style="margin-top:16px;">
+            <div class="verdict-label">Bottom line</div>
+            <p>Qwen3.5-9B + Qwen-Agent (search) + Bespoke-MiniCheck-7B (verdict) is the strongest defensible open-source stack for Veritaserum today.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 11: CONCLUSION -->
+  <div class="slide slide-center" data-slide="11">
+    <div class="bg-number">10</div>
+    <div class="content-wrap" style="max-width:700px; margin:0 auto; text-align:center;">
+      <div class="eyebrow" style="text-align:center;">Summary</div>
+      <div class="rule center"></div>
+      <h2 style="margin:0 auto;">The search is the tool.<br>The model is the mind.</h2>
+      <div class="card-grid card-grid-2" style="margin-top:32px; text-align:left;">
+        <div class="card" style="border-left-color:#5dbb80;">
+          <div class="card-tag">Backbone (reasoning)</div>
+          <h3 style="font-style:normal; font-size:15px;">Qwen3.5-9B</h3>
+          <p style="font-size:13px;">Most recent. Native tool use. Search agent benchmarked. Via Qwen-Agent.</p>
+          <span class="badge badge-green">Feb 2026</span>
+        </div>
+        <div class="card" style="border-left-color:#5dbb80;">
+          <div class="card-tag">Verifier (fact scoring)</div>
+          <h3 style="font-style:normal; font-size:15px;">Bespoke-MiniCheck-7B</h3>
+          <p style="font-size:13px;">EMNLP 2024 SOTA. Grounded claim verification. HuggingFace.</p>
+          <span class="badge badge-green">SOTA 2024</span>
+        </div>
+        <div class="card">
+          <div class="card-tag">Agent layer</div>
+          <h3 style="font-style:normal; font-size:15px;">Qwen-Agent</h3>
+          <p style="font-size:13px;">Official framework. MCP + web search + tool parsing. Open source.</p>
+          <span class="badge badge-amber">Feb 2026</span>
+        </div>
+        <div class="card">
+          <div class="card-tag">Academic reference</div>
+          <h3 style="font-style:normal; font-size:15px;">SAFE (Google DeepMind)</h3>
+          <p style="font-size:13px;">Atomic claim → search → verify. Proves the architecture. Cite in report.</p>
+          <span class="badge badge-blue">arXiv 2403.18802</span>
+        </div>
+      </div>
+      <p style="margin-top:28px; font-size:13px; color:rgba(245,240,232,0.4); font-family:var(--mono); letter-spacing:0.05em;">Use ← → arrow keys or buttons to navigate</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const counter = document.getElementById('slide-counter');
+  const progressBar = document.getElementById('progress-bar');
+  const total = slides.length;
+  let current = 0;
+
+  function goTo(n) {
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(n, total - 1));
+    slides[current].classList.add('active');
+    const num = String(current + 1).padStart(2, '0');
+    const tot = String(total).padStart(2, '0');
+    counter.textContent = `${num} / ${tot}`;
+    progressBar.style.width = `${((current + 1) / total) * 100}%`;
+  }
+
+  document.getElementById('next-btn').onclick = () => goTo(current + 1);
+  document.getElementById('prev-btn').onclick = () => goTo(current - 1);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goTo(current + 1);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') goTo(current - 1);
+  });
+
+  // Touch swipe
+  let touchX = 0;
+  document.addEventListener('touchstart', e => { touchX = e.touches[0].clientX; });
+  document.addEventListener('touchend', e => {
+    const dx = touchX - e.changedTouches[0].clientX;
+    if (Math.abs(dx) > 50) goTo(dx > 0 ? current + 1 : current - 1);
+  });
+
+  goTo(0);
+</script>
+</body>
+</html>
